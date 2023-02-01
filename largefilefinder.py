@@ -5,8 +5,11 @@ import curses
 from curses.textpad import rectangle
 import sys
 import datetime
-import libcurses
+import cursesplus as libcurses
 from glob import glob
+import re
+import gzip
+import json
 os.system("mode 160,42")#Windows, force large size
 sade = True
 ldir = "/"
@@ -34,6 +37,14 @@ def parse_size(data: int) -> str:
         result = "-"+result
     return result
 
+def writecache(data: dict):
+    ndate: bytes = str(datetime.datetime.now().strftime("%Y-%m-%d %H-%M-%S")).encode()
+    compressed_data: bytes = gzip.compress(json.dumps(data).encode())
+    finaldata: bytes = ldir.encode()+b'\n'+ndate+b'\n'+compressed_data
+    cachefile = os.path.expandvars("%USERPROFILE%\\.lffcache")
+    with open(cachefile,"wb+") as f:
+        f.write(finaldata)
+
 def main(stdscr):
     global ldir
     if not sade:
@@ -44,10 +55,10 @@ def main(stdscr):
 
         ldir = opath.strip()
     stdscr.erase()
-    stdscr.addstr(0,0,"Initializing File counter (This may take a minute depending on your disk speed)")
+    stdscr.addstr(0,0,"LFF by Enderbyte Programs...")
     stdscr.refresh()
-    file_count = sum(len(files) for _, _, files in os.walk(ldir))
 
+    totalsize = 0
     refresh = True
     fileslist = {}
     selected = 0
@@ -56,10 +67,54 @@ def main(stdscr):
     curses.start_color()
     xoffset = 0
     dlist = []
-    libcurses.load_colours()
+    libcurses.load_colours(True)
+    FILTERED = 0
+    FILTEREXT = ""
+    FILTERRE = ""
+    cdate = str(datetime.datetime.now())
     
     #curses.init_pair(1,curses.COLOR_BLACK,curses.COLOR_WHITE)
     try:
+
+        stdscr.addstr(0,0,"Reading cache")
+        stdscr.refresh()
+        if not os.path.isfile(os.path.expandvars("%USERPROFILE%\\.lffcache")):
+            pass
+        else:
+            try:
+                _stime = datetime.datetime.now()
+                try:
+                    with open(os.path.expandvars("%USERPROFILE%\\.lffcache"),"rb") as f:
+                        rawdata = f.read()
+                except:
+                    raise FileNotFoundError("Cache not found")
+                cpath = rawdata.split(b'\n')[0]
+                cdate = datetime.datetime.strptime(rawdata.split(b'\n')[1].decode(),"%Y-%m-%d %H-%M-%S")
+                xdata = b'\n'.join(rawdata.split(b'\n')[2:])
+                
+                fileslist = json.loads(gzip.decompress(xdata).decode())
+                fileslist = {k:v for k,v in fileslist.items() if k.startswith(ldir)}
+                locatek = list(fileslist.items())[0][0].replace(ldir,"")
+                if locatek[0] == "\\":
+                    locatek = locatek[1:]
+                locateks = locatek.split("\\")[0]
+                for lp in list(fileslist.items()):
+                    if locateks != lp[0]:
+                        break
+                else:
+                    #UNDIVERSE!
+                    raise RuntimeError("Insufficient diversity")
+                if len(fileslist) == 0:
+                    raise RuntimeError("empty")
+                nfileslist = list(fileslist.items())
+            except Exception as e:
+                stdscr.addstr(5,0,f"Cache could not be used. {e}")
+                stdscr.refresh()
+                os.remove(os.path.expandvars("%USERPROFILE%\\.lffcache"))
+            else:
+                refresh = False
+                _etime = datetime.datetime.now()
+        
         while True:
             fl = 0
             sx,sy = os.get_terminal_size()
@@ -77,9 +132,11 @@ def main(stdscr):
                         try:
                             flx += 1
                             stdscr.addstr(0,0," "*(sx-1))
-                            stdscr.addstr(0,0,f"Calculating ({round(flx/file_count*100,1)} %)"[0:sx-1])
+                            stdscr.addstr(0,0,f"Indexing Files ({parse_size(totalsize)})"[0:sx-1])
                             stdscr.refresh()
-                            fileslist[os.path.join(subdir, file)] = os.path.getsize(os.path.join(subdir, file))
+                            size = os.path.getsize(os.path.join(subdir, file))
+                            fileslist[os.path.join(subdir, file)] = size
+                            totalsize += size
                             
                         except (PermissionError, FileNotFoundError, OSError):
                             pass
@@ -87,12 +144,29 @@ def main(stdscr):
                 stdscr.refresh()
                 fileslist = {k: v for k, v in sorted(fileslist.items(), key=lambda item: item[1],reverse=True)}
                 nfileslist = list(fileslist.items())
+                stdscr.addstr(2,0,"Saving Cache")
+                stdscr.refresh()
+                writecache(fileslist)
+                cdate = datetime.datetime.now()
+                
                 _etime = datetime.datetime.now()
             refresh = False
+            totalsize = 0
+            if FILTERED == 1:
+                fileslist = {k:v for k,v in fileslist.items() if k.endswith(FILTEREXT.strip())}
+                nfileslist = list(fileslist.items())
+            elif FILTERED == 2:
+                try:
+                    fileslist = {k:v for k,v in fileslist.items() if re.search(FILTERRE,k) != None}
+                    nfileslist = list(fileslist.items())
+                except:
+                    libcurses.displaymsg(stdscr,["Regex Error","There was an error in the filter","Filter will now be disabled."])
             
             stdscr.addstr(0,0," "*(sx-1))
-            stdscr.addstr(0,0,f"{file_count} files in {_etime - _stime}| coords: {xoffset},{selected} | Press h for help"[0:sx-1])
+            stdscr.addstr(0,0,f"{len(nfileslist)} files in {_etime - _stime}| coords: {xoffset},{selected} | Press h for help | Data from {str(cdate)}"[0:sx-1])
             rectangle(stdscr,1,0,sy-2,sx-1)
+            if len(nfileslist) == 0:
+                stdscr.addstr(2,1,":( No files found. Press Q to quit or F to change filters")
             yinc = 0
             for file in nfileslist[offset:offset+(sy-4)]:
                 yinc += 1
@@ -159,12 +233,17 @@ def main(stdscr):
                     "Up Arrow: Move page up",
                     "S: Change terminal size (WINDOWS7 Only)",
                     "Q: Quit Program",
-                    "D: More Deletion Options"
+                    "D: More Deletion Options",
+                    "F: Filter Options",
+                    "C: Clear cache"
                 ])
-            elif ch == 100:
+            elif ch == 99:
+                if libcurses.askyesno(stdscr,"Are you sure you want to clear the cache? Future startups will take a long time."):
+                    os.remove(os.path.expandvars("%USERPROFILE%\\.lffcache"))
+            elif ch == 100 or curses.keyname(ch).decode() == "^D":
                 #More deletion option
                 stdscr.erase()
-                __O = libcurses.displayops(stdscr,["Back","Delete Selected Item","Delete Everything","Delete everything of certain extension","Delete everything larger than certain size","Delete by glob"])
+                __O = libcurses.displayops(stdscr,["Back","Delete Selected Item","Delete Everything","Delete everything of certain extension"])
                 if __O == 0:
                     pass
                 elif __O == 1:
@@ -194,6 +273,7 @@ def main(stdscr):
                             selected = 0
                             refresh = True
                             libcurses.displaymsg(stdscr,["All files deleted"])
+                        
                 elif __O == 3:
                     stdscr.erase()
                     npext = libcurses.cursesinput(stdscr,"Please input the extension you would like to delete.")
@@ -208,13 +288,34 @@ def main(stdscr):
                                 except:
                                     stdscr.addstr(1,0,f"Failed to delete")
                         refresh = True
-                elif __O > 3:
-                    libcurses.displaymsg(stdscr,"Not yet implemented. Please look for a newer release.")
                                 
             elif ch == 113:
                 stdscr.erase()
                 if libcurses.askyesno(stdscr,"Are you sure you want to quit?"):
                     return
+            elif ch == 102:
+                stdscr.clear()
+                _fop = libcurses.displayops(stdscr,["Back","Disable Filter","Filter by extension","Filter by regex"])
+                if _fop > 0 and FILTERED > 0:
+                    refresh = True
+                if _fop == 1:
+                    FILTERED = 0
+                    
+                    selected = 0
+                    offset = 0
+                if _fop == 2:
+                    FILTEREXT = libcurses.cursesinput(stdscr,"What extension to filter?")
+                    FILTERED = 1
+                    
+                    selected = 0
+                    offset = 0
+                if _fop == 3:
+                    FILTERED = 2
+                    
+                    selected = 0
+                    offset = 0
+                    FILTERRE = libcurses.cursesinput(stdscr,"What RegEx to filter?")
+                
             elif ch == 116:
                 selected = 0
                 offset = 0
