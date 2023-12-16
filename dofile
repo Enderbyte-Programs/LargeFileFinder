@@ -1,0 +1,40 @@
+!main build
+!require python3 pip3 cp ln
+
+!def check
+    set -e
+
+    python3 tests/cpinstalled.py
+    #Check if cursesplus is installed
+
+!def build
+    echo "Building Large File Finder"
+    rm -rf dist
+    set -e
+
+    mkdir dist
+    cp src/*.py dist
+    cp dist/lff.py dist/lff
+    chmod +x dist/lff
+    !execute check
+!def install:admin
+    echo "Installing"
+    if [ ! -d "dist" ]; then
+        !execute build
+    fi
+    set -e
+    mkdir -p /usr/lib/lff
+    cp src/epprodkey.py /usr/lib/lff
+    cp dist/lff /usr/bin/lff
+    ln -svf /usr/bin/lff /usr/bin/largefilefinder
+    rm -rf dist
+
+!def commit
+    #Commit. Requires argument for message
+    git add .
+    git commit -m $1
+    git push
+
+!def run:admin
+    !execute install
+    lff
