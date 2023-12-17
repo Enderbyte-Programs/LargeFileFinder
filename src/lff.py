@@ -41,24 +41,37 @@ class FileObject:
             self.size = os.path.getsize(path)
         else:
             self.size = -1
-        self.lastmodified = os.path.getmtime(path)
-        self.lastadded = os.path.getatime(path)
+        self.lastmodified = datetime.datetime.fromtimestamp(os.path.getmtime(path))
+        self.lastadded = datetime.datetime.fromtimestamp(os.path.getatime(path))
     def serialize(self) -> dict:
         return {
             "path" : self.path,
             "isdir" : self.isdirectory,
             "size" : self.size,
-            "lm" : self.lastmodified,
-            "la" : self.lastadded
+            "lm" : self.lastmodified.timestamp(),
+            "la" : self.lastadded.timestamp()
         }
+    def out(self,size:int,nameoffset:int=0,col=["size","la"]):
+        reserved = 42
+        
+        namer = size-reserved
+        xfin = []
+        for cx in col:
+            xfin.append(str(self.serialize()[cx]))
+            if cx == "size":
+                xfin[-1] = parse_size_long(int(xfin[-1]))
+            if cx == "la" or cx == "lm":
+                xfin[-1] = datetime.datetime.fromtimestamp(int(float(xfin[-1]))).strftime("%Y-%m-%d %H:%M:%S")
+        return f"{self.path[nameoffset:nameoffset+namer].ljust(namer)} {' '.join([xh.ljust(20) for xh in xfin])}"
+
     @staticmethod
     def loadfromdict(inp:dict):
         x = FileObject(None)
         x.path = inp["path"]
         x.isdirectory = inp["isdir"]
         x.size = inp["size"]
-        x.lastmodified = inp["lm"]
-        x.lastadded = inp["la"]
+        x.lastmodified = datetime.datetime.fromtimestamp(inp["lm"])
+        x.lastadded = datetime.datetime.fromtimestamp(inp["la"])
         return x
 
 def parse_size(data: int) -> str:
@@ -69,7 +82,7 @@ def parse_size(data: int) -> str:
         neg = False
     if data < 2000:
         result = f"{data} bytes"
-    elif data > 2000000000000000:
+    elif data > 2000000000000000:#No-one should EVER see this
         result = f"{round(data/1000000000000000,2)} EB"
     elif data > 2000000000000:
         result = f"{round(data/1000000000000,2)} TB"
@@ -79,6 +92,30 @@ def parse_size(data: int) -> str:
         result = f"{round(data/1000000,2)} MB"
     elif data > 2000:
         result = f"{round(data/1000,2)} KB"
+    else:
+        result = "??"
+    if neg:
+        result = "-"+result
+    return result
+
+def parse_size_long(data: int) -> str:
+    if data < 0:
+        neg = True
+        data = -data
+    else:
+        neg = False
+    if data < 2000:
+        result = f"{data} bytes"
+    elif data > 2000000000000000:#No-one should EVER see this
+        result = f"{round(data/1000000000000000,2)} exabytes"
+    elif data > 2000000000000:
+        result = f"{round(data/1000000000000,2)} terabytes"
+    elif data > 2000000000:
+        result = f"{round(data/1000000000,2)} gigabytes"
+    elif data > 2000000:
+        result = f"{round(data/1000000,2)} megabytes"
+    elif data > 2000:
+        result = f"{round(data/1000,2)} kilobytes"
     if neg:
         result = "-"+result
     return result
@@ -139,7 +176,7 @@ def mass_index_with_progress_bar(stdscr,directory,config={}) -> list:
             jxb = {"updated":datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),"data":[]}
             for sz in final:
                 jxb["data"].append(sz.serialize())
-            f.write(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S").ljust(12," ").encode()+gzip.compress(json.dumps(jxb).encode()))
+            f.write(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S").ljust(19," ").encode()+gzip.compress(json.dumps(jxb).encode()))
     except:
         np.stop()
         np.destroy()
@@ -154,7 +191,7 @@ def cache_is_old() -> bool:
         return False
     else:
         with open(cachedir,'rb') as f:
-            data = f.read(12).decode()
+            data = f.read(19).decode()
                 
         #data = read_cache()
         if (datetime.datetime.now() - datetime.datetime.strptime(data.strip(),"%Y-%m-%d %H:%M:%S")).total_seconds() // (3600*24) > 7:
@@ -165,11 +202,13 @@ def cache_exists() -> bool:
     return os.path.isfile(cachedir)
 
 def read_cache() -> dict:
-    with open(cachedir,"r") as fxz:
-        data = json.loads(gzip.decompress(fxz.read()[12:]).decode())
+    with open(cachedir,"rb") as fxz:
+        data = json.loads(gzip.decompress(fxz.read()[19:]).decode())
     return data
 
 def mfind(stdscr):
+    cursesplus.hidecursor()
+    curses.mousemask(1)
     cursesplus.displaymsgnodelay(stdscr,["Loading","Please wait"])
     if not cache_exists():
         mxz: list[FileObject] = mass_index_with_progress_bar(stdscr,"/")
@@ -182,30 +221,99 @@ def mfind(stdscr):
     elif cache_exists and not cache_is_old():
         cursesplus.displaymsgnodelay(stdscr,["Reading cache","Please wait"])
         mxz = [FileObject.loadfromdict(z) for z in read_cache()["data"]]
+    cursesplus.displaymsgnodelay(stdscr,["Sorting files","Please wait"])
+    mxz.sort(key=lambda x: x.size, reverse=True)
 
-    selected = 0
+    selected = []
+    active = 0
     yoffset = 0
     xoffset = 0
+    msx = -1
+    msy = -1
     while True:
         stdscr.clear()
         mx,my = os.get_terminal_size()
         curses.resize_term(my,mx)
         cursesplus.filline(stdscr,0,cursesplus.set_colour(cursesplus.WHITE,cursesplus.BLACK))
-        stdscr.addstr(0,0,"For keybindings, press H",cursesplus.set_colour(cursesplus.WHITE,cursesplus.BLACK))
+        stdscr.addstr(0,0,"For keybindings, press H [CLICK ME FOR HELP]",cursesplus.set_colour(cursesplus.WHITE,cursesplus.BLACK))
         stdscr.addstr(my-3,0,"─"*(mx-1))
-        ei = 0
-        for item in mxz[yoffset:(yoffset+my-4)]:
+        stdscr.addstr(1,0,"Name".ljust(mx-42)+" "+"Size".ljust(20)+" Last accessed")
+        ei = 1
+        for item in mxz[yoffset:(yoffset+my-5)]:
             ei += 1
-            stdscr.addstr(ei,0,item.path[0:(mx-1)])
+            if yoffset+ei-2 in selected and yoffset+ei-2 != active:
+                stdscr.addstr(ei,0,item.out(mx-20,xoffset),cursesplus.set_colour(cursesplus.WHITE,cursesplus.BLACK))
+            elif yoffset+ei-2 == active and not yoffset+ei-2 in selected:
+                stdscr.addstr(ei,0,item.out(mx-20,xoffset),cursesplus.set_colour(cursesplus.BLACK,cursesplus.CYAN))
+            elif yoffset+ei-2 == active and yoffset+ei-2 in selected:
+                stdscr.addstr(ei,0,item.out(mx-20,xoffset),cursesplus.set_colour(cursesplus.WHITE,cursesplus.CYAN))
+            else:
+                stdscr.addstr(ei,0,item.out(mx-20,xoffset))
+        for es in range(1,my-1):
+            stdscr.addstr(es,my-19,"│")
+        stdscr.addstr(my-2,mx-20,f"{active}/{len(mxz)} files")
+        stdscr.addstr(my-2,0,f"{len(selected)} files selected")
+        stdscr.addstr(my-2,20,f"totalling {parse_size(sum([mxz[z].size for z in selected]))}")
+        
+        if xoffset > 0:
+            stdscr.addstr(my-1,0,f"<<< {xoffset}")
+        try:
+            _, msx, msy, _, _ = curses.getmouse()
+        except:
+            pass
+        if msy >= 0 and msx >= 0:
+            stdscr.addstr(msy,msx,"↖",cursesplus.set_colour(cursesplus.BLUE,curses.COLOR_WHITE))
+        stdscr.addstr(0,mx-10,f"{msx},{msy}",cursesplus.set_colour(cursesplus.WHITE,cursesplus.BLACK))
         stdscr.refresh()
         ch = stdscr.getch()
+        
+        if ch == curses.KEY_DOWN and active < len(mxz)-1:
+
+            active += 1
+            if active > yoffset+my-7:
+                yoffset += 1
+        elif ch == curses.KEY_UP and active > 0:
+            active -= 1
+            if active < yoffset:
+                yoffset -= 1
+        elif ch == 115:
+            if active in selected:
+                selected.remove(active)
+            else:
+                selected.append(active)
+        elif ch == 113:
+            return
+        elif ch == 114:
+            if cursesplus.messagebox.askyesno(stdscr,["Warning","This will perform a full rescan of the selected folder","Are you sure you want to continue?"]):
+                mxz: list[FileObject] = mass_index_with_progress_bar(stdscr,"/")
+                mxz.sort(key=lambda x: x.size, reverse=True)
+        elif ch == curses.KEY_RIGHT:
+            xoffset += 1
+        elif ch == curses.KEY_LEFT and xoffset > 0:
+            xoffset -= 1
+        elif ch == 10 or ch == 13 or ch == curses.KEY_ENTER:
+            selected = [active]
+        elif ch == curses.KEY_PPAGE and yoffset > 0:
+            yoffset -= 1
+        elif ch == curses.KEY_NPAGE:
+            yoffset += 1
+        
+        elif ch == 104 or (msx > 25 and msx < 43 and msy == 0):
+            cursesplus.displaymsg(stdscr,[
+"Q: Quit",
+"H: Help",
+"Enter: Select",
+"S: Add to selection",
+"Up Arrow: Move selector up",
+"Down arrow: Move selector down",
+"Left Arrow: Move names list to the left",
+"Right Arrow: Move names list to the right",
+"R: Rescan files"
+
+            ])
 
 def main(stdscr):
-    while True:
-        wtd = cursesplus.coloured_option_menu(stdscr,["Find Large Files","Quit"])
-        if wtd == 1:
-            sys.exit()
-        elif wtd == 0:
-            mfind(stdscr)
+
+    mfind(stdscr)
 
 curses.wrapper(main)
