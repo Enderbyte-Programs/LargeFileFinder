@@ -53,8 +53,13 @@ class FileObject:
         }
     def out(self,size:int,nameoffset:int=0,col=["size","la"]):
         reserved = 42
+        np = self.path
         
         namer = size-reserved
+        if len(np)-nameoffset > namer:
+            np = np[nameoffset:nameoffset+namer-3]+"..."
+        else:
+            np = np[nameoffset:nameoffset+namer]
         xfin = []
         for cx in col:
             xfin.append(str(self.serialize()[cx]))
@@ -62,7 +67,7 @@ class FileObject:
                 xfin[-1] = parse_size_long(int(xfin[-1]))
             if cx == "la" or cx == "lm":
                 xfin[-1] = datetime.datetime.fromtimestamp(int(float(xfin[-1]))).strftime("%Y-%m-%d %H:%M:%S")
-        return f"{self.path[nameoffset:nameoffset+namer].ljust(namer)} {' '.join([xh.ljust(20) for xh in xfin])}"
+        return f"{np.ljust(namer)} {' '.join([xh.ljust(20) for xh in xfin])}"
 
     @staticmethod
     def loadfromdict(inp:dict):
@@ -206,6 +211,9 @@ def read_cache() -> dict:
         data = json.loads(gzip.decompress(fxz.read()[19:]).decode())
     return data
 
+def buttonify(d:str) -> str:
+    return f"[{d.center(16)}]"
+
 def mfind(stdscr):
     cursesplus.hidecursor()
     curses.mousemask(1)
@@ -228,6 +236,8 @@ def mfind(stdscr):
     active = 0
     yoffset = 0
     xoffset = 0
+    ticker = "Clk below options"
+    tickertick = 0
     msx = -1
     msy = -1
     while True:
@@ -235,34 +245,34 @@ def mfind(stdscr):
         mx,my = os.get_terminal_size()
         curses.resize_term(my,mx)
         cursesplus.filline(stdscr,0,cursesplus.set_colour(cursesplus.WHITE,cursesplus.BLACK))
-        stdscr.addstr(0,0,"For keybindings, press H [CLICK ME FOR HELP]",cursesplus.set_colour(cursesplus.WHITE,cursesplus.BLACK))
         stdscr.addstr(my-3,0,"─"*(mx-1))
-        stdscr.addstr(1,0,"Name".ljust(mx-42)+" "+"Size".ljust(20)+" Last accessed")
-        ei = 1
-        for item in mxz[yoffset:(yoffset+my-5)]:
+        stdscr.addstr(0,0,"Name".ljust(mx-19-42)+" "+"Size".ljust(20)+" Last accessed",cursesplus.set_colour(cursesplus.WHITE,cursesplus.BLACK))
+        ei = 0
+        for item in mxz[yoffset:(yoffset+my-4)]:
             ei += 1
-            if yoffset+ei-2 in selected and yoffset+ei-2 != active:
+            if yoffset+ei-1 in selected and yoffset+ei-1 != active:
                 stdscr.addstr(ei,0,item.out(mx-20,xoffset),cursesplus.set_colour(cursesplus.WHITE,cursesplus.BLACK))
-            elif yoffset+ei-2 == active and not yoffset+ei-2 in selected:
+            elif yoffset+ei-1 == active and not yoffset+ei-1 in selected:
                 stdscr.addstr(ei,0,item.out(mx-20,xoffset),cursesplus.set_colour(cursesplus.BLACK,cursesplus.CYAN))
-            elif yoffset+ei-2 == active and yoffset+ei-2 in selected:
+            elif yoffset+ei-1 == active and yoffset+ei-1 in selected:
                 stdscr.addstr(ei,0,item.out(mx-20,xoffset),cursesplus.set_colour(cursesplus.WHITE,cursesplus.CYAN))
             else:
                 stdscr.addstr(ei,0,item.out(mx-20,xoffset))
-        for es in range(1,my-1):
-            stdscr.addstr(es,my-19,"│")
+        for es in range(1,my-3):
+            stdscr.addstr(es,mx-19,"│")
+        stdscr.addstr(my-3,mx-19,"┴")
+        buttonblockstart = mx-18
         stdscr.addstr(my-2,mx-20,f"{active}/{len(mxz)} files")
         stdscr.addstr(my-2,0,f"{len(selected)} files selected")
         stdscr.addstr(my-2,20,f"totalling {parse_size(sum([mxz[z].size for z in selected]))}")
+        stdscr.addstr(2,buttonblockstart,f"[{'Help (H)'.center(16)}]")
+        stdscr.addstr(3,buttonblockstart,f"[{'Quit (Q)'.center(16)}]")
+        stdscr.addstr(4,buttonblockstart,buttonify("Rescan (R)"))
+        stdscr.addstr(1,buttonblockstart,ticker)
         
         if xoffset > 0:
             stdscr.addstr(my-1,0,f"<<< {xoffset}")
-        try:
-            _, msx, msy, _, _ = curses.getmouse()
-        except:
-            pass
-        if msy >= 0 and msx >= 0:
-            stdscr.addstr(msy,msx,"↖",cursesplus.set_colour(cursesplus.BLUE,curses.COLOR_WHITE))
+
         stdscr.addstr(0,mx-10,f"{msx},{msy}",cursesplus.set_colour(cursesplus.WHITE,cursesplus.BLACK))
         stdscr.refresh()
         ch = stdscr.getch()
@@ -272,33 +282,58 @@ def mfind(stdscr):
             active += 1
             if active > yoffset+my-7:
                 yoffset += 1
-        elif ch == curses.KEY_UP and active > 0:
+        if ch == curses.KEY_UP and active > 0:
             active -= 1
             if active < yoffset:
                 yoffset -= 1
-        elif ch == 115:
+        if ch == 115:
             if active in selected:
                 selected.remove(active)
             else:
                 selected.append(active)
-        elif ch == 113:
+        if ch == 113:
             return
-        elif ch == 114:
+        if ch == 114:
             if cursesplus.messagebox.askyesno(stdscr,["Warning","This will perform a full rescan of the selected folder","Are you sure you want to continue?"]):
                 mxz: list[FileObject] = mass_index_with_progress_bar(stdscr,"/")
                 mxz.sort(key=lambda x: x.size, reverse=True)
-        elif ch == curses.KEY_RIGHT:
+        if ch == curses.KEY_RIGHT:
             xoffset += 1
-        elif ch == curses.KEY_LEFT and xoffset > 0:
+        if ch == curses.KEY_LEFT and xoffset > 0:
             xoffset -= 1
-        elif ch == 10 or ch == 13 or ch == curses.KEY_ENTER:
+        if ch == curses.KEY_MOUSE:
+            try:
+                _, msx, msy, _, _ = curses.getmouse()
+            except:
+                pass
+            if (msx > buttonblockstart and msy == 2):
+                            cursesplus.displaymsg(stdscr,[
+"Q: Quit",
+"H: Help",
+"Enter: Select",
+"S: Add to selection",
+"Up Arrow: Move selector up",
+"Down arrow: Move selector down",
+"Left Arrow: Move names list to the left",
+"Right Arrow: Move names list to the right",
+"R: Rescan files"
+
+            ])
+            if msx > buttonblockstart and msy == 3:
+                cursesplus.displaymsgnodelay(stdscr,["Shutting down"])
+                return
+            if msx > buttonblockstart and msy == 4:
+                if cursesplus.messagebox.askyesno(stdscr,["Warning","This will perform a full rescan of the selected folder","Are you sure you want to continue?"]):
+                    mxz: list[FileObject] = mass_index_with_progress_bar(stdscr,"/")
+                    mxz.sort(key=lambda x: x.size, reverse=True)
+        if ch == 10 or ch == 13 or ch == curses.KEY_ENTER:
             selected = [active]
-        elif ch == curses.KEY_PPAGE and yoffset > 0:
+        if ch == curses.KEY_PPAGE and yoffset > 0:
             yoffset -= 1
-        elif ch == curses.KEY_NPAGE:
+        if ch == curses.KEY_NPAGE:
             yoffset += 1
         
-        elif ch == 104 or (msx > 25 and msx < 43 and msy == 0):
+        if ch == 104 :
             cursesplus.displaymsg(stdscr,[
 "Q: Quit",
 "H: Help",
@@ -311,7 +346,6 @@ def mfind(stdscr):
 "R: Rescan files"
 
             ])
-
 def main(stdscr):
 
     mfind(stdscr)
