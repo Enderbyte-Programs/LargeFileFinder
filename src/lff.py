@@ -214,6 +214,31 @@ def read_cache() -> dict:
 def buttonify(d:str) -> str:
     return f"[{d.center(16)}]"
 
+def is_deletable(path) -> bool:
+    if type(path) == FileObject:
+        path = path.path
+    return os.access(path, os.W_OK)
+
+dangerwords = ["page","swap","sys","lib"]
+
+def str_contains_word_from_list(sz:list,sx:str):
+    for s in dangerwords:
+        if s in sx:
+            return True
+    return False
+
+def delf(stdscr,sels,paths):
+    for sp in sels:
+        if str_contains_word_from_list(dangerwords,sp.path):
+            if not cursesplus.messagebox.askyesno(stdscr,["The file",sp.path,"contains a danger word.","You may be deleting an important file.","Do you want to continue?"],False,cursesplus.messagebox.MessageBoxStates.NO):
+                continue
+        try:
+            os.remove(sp.path)
+            paths.remove(sp)
+        except:
+            cursesplus.messagebox.showerror(stdscr,["Failed to delete",sp.path])
+    return paths
+
 def mfind(stdscr):
     cursesplus.hidecursor()
     curses.mousemask(1)
@@ -233,12 +258,14 @@ def mfind(stdscr):
     mxz.sort(key=lambda x: x.size, reverse=True)
 
     selected = []
+    selectedl = []
     active = 0
     yoffset = 0
     xoffset = 0
     ticker = "Clk below options"
     tickertick = 0
     msx = -1
+    errs = 0
     msy = -1
     while True:
         stdscr.clear()
@@ -250,11 +277,11 @@ def mfind(stdscr):
         ei = 0
         for item in mxz[yoffset:(yoffset+my-4)]:
             ei += 1
-            if yoffset+ei-1 in selected and yoffset+ei-1 != active:
+            if yoffset+ei-1 in selectedl and yoffset+ei-1 != active:
                 stdscr.addstr(ei,0,item.out(mx-20,xoffset),cursesplus.set_colour(cursesplus.WHITE,cursesplus.BLACK))
-            elif yoffset+ei-1 == active and not yoffset+ei-1 in selected:
+            elif yoffset+ei-1 == active and not yoffset+ei-1 in selectedl:
                 stdscr.addstr(ei,0,item.out(mx-20,xoffset),cursesplus.set_colour(cursesplus.BLACK,cursesplus.CYAN))
-            elif yoffset+ei-1 == active and yoffset+ei-1 in selected:
+            elif yoffset+ei-1 == active and yoffset+ei-1 in selectedl:
                 stdscr.addstr(ei,0,item.out(mx-20,xoffset),cursesplus.set_colour(cursesplus.WHITE,cursesplus.CYAN))
             else:
                 stdscr.addstr(ei,0,item.out(mx-20,xoffset))
@@ -264,16 +291,25 @@ def mfind(stdscr):
         buttonblockstart = mx-18
         stdscr.addstr(my-2,mx-20,f"{active}/{len(mxz)} files")
         stdscr.addstr(my-2,0,f"{len(selected)} files selected")
-        stdscr.addstr(my-2,20,f"totalling {parse_size(sum([mxz[z].size for z in selected]))}")
+        stdscr.addstr(my-2,20,f"totalling {parse_size(sum([z.size for z in selected]))}")
         stdscr.addstr(2,buttonblockstart,f"[{'Help (H)'.center(16)}]")
         stdscr.addstr(3,buttonblockstart,f"[{'Quit (Q)'.center(16)}]")
         stdscr.addstr(4,buttonblockstart,buttonify("Rescan (R)"))
+        stdscr.addstr(5,buttonblockstart,buttonify("Delete (Del)"))
+        stdscr.addstr(my-4,buttonblockstart,buttonify("Go to bottom"))
+        stdscr.addstr(my-5,buttonblockstart,buttonify("Down 1000 items"))
+        stdscr.addstr(my-6,buttonblockstart,buttonify("Reset h. scroll"))
+        stdscr.addstr(my-7,buttonblockstart,buttonify("Up 1000 items"))
+        stdscr.addstr(my-8,buttonblockstart,buttonify("Go to top"))
         stdscr.addstr(1,buttonblockstart,ticker)
+
+        if errs > 0:
+            stdscr.addstr(my-1,10,f"{errs} selected files can't be deleted",cursesplus.set_colour(cursesplus.BLACK,cursesplus.RED))
         
         if xoffset > 0:
             stdscr.addstr(my-1,0,f"<<< {xoffset}")
 
-        stdscr.addstr(0,mx-10,f"{msx},{msy}",cursesplus.set_colour(cursesplus.WHITE,cursesplus.BLACK))
+        #stdscr.addstr(0,mx-10,f"{msx},{msy}",cursesplus.set_colour(cursesplus.WHITE,cursesplus.BLACK))
         stdscr.refresh()
         ch = stdscr.getch()
         
@@ -287,12 +323,20 @@ def mfind(stdscr):
             if active < yoffset:
                 yoffset -= 1
         if ch == 115:
-            if active in selected:
-                selected.remove(active)
+            if active in selectedl:
+                selectedl.remove(active)
+                selected.remove(mxz[active])
+                if not is_deletable(mxz[active]):
+                    errs -= 1
             else:
-                selected.append(active)
+                selectedl.append(active)
+                selected.append(mxz[active])
+                if not is_deletable(mxz[active]):
+                    errs += 1
         if ch == 113:
             return
+        if ch == curses.KEY_DC:
+            mxz = delf(stdscr,selected,mxz)
         if ch == 114:
             if cursesplus.messagebox.askyesno(stdscr,["Warning","This will perform a full rescan of the selected folder","Are you sure you want to continue?"]):
                 mxz: list[FileObject] = mass_index_with_progress_bar(stdscr,"/")
@@ -322,12 +366,31 @@ def mfind(stdscr):
             if msx > buttonblockstart and msy == 3:
                 cursesplus.displaymsgnodelay(stdscr,["Shutting down"])
                 return
+            if msx > buttonblockstart and msy == 5:
+                mxz = delf(stdscr,selected,mxz)
             if msx > buttonblockstart and msy == 4:
                 if cursesplus.messagebox.askyesno(stdscr,["Warning","This will perform a full rescan of the selected folder","Are you sure you want to continue?"]):
                     mxz: list[FileObject] = mass_index_with_progress_bar(stdscr,"/")
                     mxz.sort(key=lambda x: x.size, reverse=True)
+            elif msx > buttonblockstart and msy == my-4:
+                yoffset = len(mxz)-(my-5)
+                active = len(mxz)-(my-5)
+            elif msx > buttonblockstart and msy == my-5:
+                yoffset += 1000
+                active += 1000
+            elif msx > buttonblockstart and msy == my-6:
+                xoffset = 0
+            elif msx > buttonblockstart and msy == my-7:
+                yoffset -= 1000
+                active -= 1000
+            elif msx > buttonblockstart and msy == my-8:
+                yoffset = 0
+                active = 0
         if ch == 10 or ch == 13 or ch == curses.KEY_ENTER:
-            selected = [active]
+            selected = [mxz[active]]
+            selectedl = [active]
+            if not is_deletable(mxz[active]):
+                errs += 1
         if ch == curses.KEY_PPAGE and yoffset > 0:
             yoffset -= 1
         if ch == curses.KEY_NPAGE:
