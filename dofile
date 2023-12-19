@@ -34,8 +34,6 @@
     git add .
     git commit -m $1
     git push
-    #Now push to VM
-    cp -r . ~/__VM__
 
 !def run:admin
     !execute install

@@ -228,6 +228,8 @@ def str_contains_word_from_list(sz:list,sx:str):
     return False
 
 def delf(stdscr,sels,paths):
+    if len(sels) == 0:
+        cursesplus.messagebox.showwarning(stdscr,["Nothing was deleted because nothing was selected","Select items by pressing S","When they are blue"])
     for sp in sels:
         if str_contains_word_from_list(dangerwords,sp.path):
             if not cursesplus.messagebox.askyesno(stdscr,["The file",sp.path,"contains a danger word.","You may be deleting an important file.","Do you want to continue?"],False,cursesplus.messagebox.MessageBoxStates.NO):
@@ -235,8 +237,10 @@ def delf(stdscr,sels,paths):
         try:
             os.remove(sp.path)
             paths.remove(sp)
-        except:
-            cursesplus.messagebox.showerror(stdscr,["Failed to delete",sp.path])
+        except FileNotFoundError:
+            paths.remove(sp)
+        except Exception as e:
+            cursesplus.messagebox.showerror(stdscr,["Failed to delete",sp.path,str(e)])
     return paths
 
 def mfind(stdscr):
@@ -258,7 +262,6 @@ def mfind(stdscr):
     mxz.sort(key=lambda x: x.size, reverse=True)
 
     selected = []
-    selectedl = []
     active = 0
     yoffset = 0
     xoffset = 0
@@ -277,11 +280,11 @@ def mfind(stdscr):
         ei = 0
         for item in mxz[yoffset:(yoffset+my-4)]:
             ei += 1
-            if yoffset+ei-1 in selectedl and yoffset+ei-1 != active:
+            if mxz[yoffset+ei-1] in selected and yoffset+ei-1 != active:
                 stdscr.addstr(ei,0,item.out(mx-20,xoffset),cursesplus.set_colour(cursesplus.WHITE,cursesplus.BLACK))
-            elif yoffset+ei-1 == active and not yoffset+ei-1 in selectedl:
+            elif mxz[yoffset+ei-1] == mxz[active] and not mxz[yoffset+ei-1] in selected:
                 stdscr.addstr(ei,0,item.out(mx-20,xoffset),cursesplus.set_colour(cursesplus.BLACK,cursesplus.CYAN))
-            elif yoffset+ei-1 == active and yoffset+ei-1 in selectedl:
+            elif yoffset+ei-1 == active and mxz[yoffset+ei-1] in selected:
                 stdscr.addstr(ei,0,item.out(mx-20,xoffset),cursesplus.set_colour(cursesplus.WHITE,cursesplus.CYAN))
             else:
                 stdscr.addstr(ei,0,item.out(mx-20,xoffset))
@@ -323,13 +326,11 @@ def mfind(stdscr):
             if active < yoffset:
                 yoffset -= 1
         if ch == 115:
-            if active in selectedl:
-                selectedl.remove(active)
+            if mxz[active] in selected:
                 selected.remove(mxz[active])
                 if not is_deletable(mxz[active]):
                     errs -= 1
             else:
-                selectedl.append(active)
                 selected.append(mxz[active])
                 if not is_deletable(mxz[active]):
                     errs += 1
@@ -388,7 +389,6 @@ def mfind(stdscr):
                 active = 0
         if ch == 10 or ch == 13 or ch == curses.KEY_ENTER:
             selected = [mxz[active]]
-            selectedl = [active]
             if not is_deletable(mxz[active]):
                 errs += 1
         if ch == curses.KEY_PPAGE and yoffset > 0:
